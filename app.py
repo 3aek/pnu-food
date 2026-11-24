@@ -277,17 +277,26 @@ def retry(why):
 # ─────────────────────────────────────────────
 # 화면
 # ─────────────────────────────────────────────
+def wide_button(label, **kw):
+    """화면 폭에 맞춘 버튼 (Streamlit 버전에 따라 옵션 이름이 달라서 둘 다 대비)"""
+    try:
+        return st.button(label, width="stretch", **kw)
+    except TypeError:
+        return st.button(label, use_container_width=True, **kw)
+
+
 def restaurant_card(num, r, a):
-    title = f"{num}. {r['식당명']}" if num else r["식당명"]
-    st.write(title)
-    st.write(
-        f"- 위치: {r['위치']}\n"
-        f"- 메뉴: {r['대표메뉴']}\n"
-        f"- 가격: {r['가격']:,}원\n"
-        f"- 영업시간: {r['영업시간']} / 브레이크타임: {r['브레이크타임'] or '없음'}\n"
-        f"- 휴무일: {r['휴무일'] or '없음'}\n"
-        f"- 추천 이유: {reason_text(r, a)}"
-    )
+    with st.container(border=True):
+        title = f"{num}. {r['식당명']}" if num else r["식당명"]
+        st.markdown(f"**{title}**")
+        st.markdown(
+            f":gray[위치]　{r['위치']}  \n"
+            f":gray[메뉴]　{r['대표메뉴']}  \n"
+            f":gray[가격]　{r['가격']:,}원  \n"
+            f":gray[영업]　{r['영업시간']} (브레이크타임 {r['브레이크타임'] or '없음'})  \n"
+            f":gray[휴무]　{r['휴무일'] or '없음'}"
+        )
+        st.caption(f"추천 이유: {reason_text(r, a)}")
 
 
 def get_password():
@@ -301,84 +310,91 @@ def page_login():
     st.title(APP_TITLE)
     password = get_password()
     if password is None:
-        st.write("관리자 설정 필요: Streamlit Cloud의 Secrets에 password를 입력하세요.")
+        st.error("관리자 설정 필요: Streamlit Cloud의 Secrets에 password를 입력하세요.")
         return
-    with st.form("login"):
+    with st.form("login", border=False):
         typed = st.text_input("비밀번호를 입력하세요.", type="password")
-        ok = st.form_submit_button("입장")
+        ok = st.form_submit_button("입장", type="primary")
     if ok:
         if typed == password:
             st.session_state.authed = True
             st.rerun()
         else:
-            st.write("비밀번호가 맞지 않습니다.")
+            st.error("비밀번호가 맞지 않습니다.")
 
 
 def page_start():
     st.title(APP_TITLE)
     st.write("몇 가지 질문에 답하면 부산대 근처 식당을 추천해 드립니다.")
-    st.button("시작", on_click=start)
+    st.write("")
+    wide_button("시작", type="primary", on_click=start)
 
 
 def page_question():
     step = st.session_state.step
     key, text, options = QUESTIONS[step]
-    st.write(f"{step + 1} / {len(QUESTIONS)}")
-    st.write(text)
+    total = len(QUESTIONS)
+    st.progress((step + 1) / total, text=f"{step + 1} / {total}")
+    st.subheader(text)
     for opt in options:
-        st.button(opt, key=f"q{step}_{opt}", on_click=choose, args=(key, opt))
+        wide_button(opt, key=f"q{step}_{opt}", on_click=choose, args=(key, opt))
     st.write("")
-    st.button("이전", key="back", on_click=go_back)
-    st.button("처음부터 다시", key="restart_q", on_click=restart)
+    col1, col2 = st.columns(2)
+    with col1:
+        wide_button("이전", key="back", on_click=go_back)
+    with col2:
+        wide_button("처음부터 다시", key="restart_q", on_click=restart)
 
 
 def page_result():
     s = st.session_state
     a = s.answers
+    st.subheader("추천 결과")
 
     if not s.queue:
         st.write("조건에 맞는 식당이 없습니다. 조건을 바꿔 다시 시도해 주세요.")
-        st.button("처음부터 다시", on_click=restart)
+        wide_button("처음부터 다시", type="primary", on_click=restart)
         return
 
     if s.stage == "end":
         st.write("조건에 맞는 식당을 모두 보여드렸습니다.")
-        st.button("처음부터 다시", on_click=restart)
+        wide_button("처음부터 다시", type="primary", on_click=restart)
         return
 
     if s.stage == "done":
         restaurant_card("", s.queue[s.chosen], a)
-        st.write("맛있게 드세요.")
-        st.button("처음부터 다시", on_click=restart)
+        st.success("맛있게 드세요.")
+        wide_button("처음부터 다시", on_click=restart)
         return
 
     if s.again:
-        st.write("다른 식당을 추천합니다.")
+        st.caption("다른 식당을 추천합니다.")
     if s.notice:
-        st.write(s.notice)
+        st.caption(s.notice)
     if s.partial:
-        st.write("모든 조건에 맞는 곳이 없어 가장 비슷한 곳을 추천합니다.")
+        st.caption("모든 조건에 맞는 곳이 없어 가장 비슷한 곳을 추천합니다.")
 
     for n, i in enumerate(s.shown, start=1):
         restaurant_card(n, s.queue[i], a)
 
+    st.write("")
     if s.stage == "show":
-        st.write("어디로 가실래요?")
+        st.subheader("어디로 가실래요?")
         for i in s.shown:
-            st.button(s.queue[i]["식당명"], key=f"pick_{i}", on_click=pick, args=(i,))
-        st.button("다른 곳 볼래요", on_click=want_other)
+            wide_button(s.queue[i]["식당명"], key=f"pick_{i}", on_click=pick, args=(i,))
+        wide_button("다른 곳 볼래요", on_click=want_other)
     elif s.stage == "why":
-        st.write("어떤 점이 아쉬우신가요?")
-        st.button("가격이 비싸요", on_click=retry, args=("price",))
-        st.button("다른 종류를 원해요", on_click=retry, args=("kind",))
-        st.button("그냥 싫어요", on_click=retry, args=("any",))
+        st.subheader("어떤 점이 아쉬우신가요?")
+        wide_button("가격이 비싸요", on_click=retry, args=("price",))
+        wide_button("다른 종류를 원해요", on_click=retry, args=("kind",))
+        wide_button("그냥 싫어요", on_click=retry, args=("any",))
 
     st.write("")
-    st.button("처음부터 다시", key="restart_r", on_click=restart)
+    wide_button("처음부터 다시", key="restart_r", on_click=restart)
 
 
 def main():
-    st.set_page_config(page_title=APP_TITLE)
+    st.set_page_config(page_title=APP_TITLE, page_icon="🍚", layout="centered")
     init_state()
 
     if not st.session_state.authed:
