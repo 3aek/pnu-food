@@ -1,8 +1,8 @@
 [theme]
 base = "light"
-primaryColor = "#2563EB"
+primaryColor = "#3182F6"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F3F5F9"
-textColor = "#1F2937"
-borderColor = "#E5E7EB"
-baseRadius = "0.75rem"
+secondaryBackgroundColor = "#F2F4F6"
+textColor = "#191F28"
+borderColor = "#E5E8EB"
+baseRadius = "16px"
