@@ -5,6 +5,7 @@
 """
 
 import csv
+import html
 import random
 from datetime import datetime, time
 from pathlib import Path
@@ -270,8 +271,90 @@ def retry(why):
 
 
 # ─────────────────────────────────────────────
-# 화면
+# 디자인 (토스 앱처럼: 큰 글씨, 넉넉한 여백, 회색 카드, 파란 버튼)
 # ─────────────────────────────────────────────
+TOSS_BLUE = "#3182F6"
+
+CSS = f"""
+<style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+
+html, body, [class*="st-"], button, input, p, div, span {{
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    letter-spacing: -0.02em;
+}}
+header[data-testid="stHeader"] {{ background: transparent; }}
+
+/* 글씨 */
+.t-title {{ font-size: 28px; font-weight: 700; color: #191F28; line-height: 1.35; margin: 0 0 8px; }}
+.t-sub {{ font-size: 17px; color: #6B7684; line-height: 1.5; margin-bottom: 32px; }}
+.t-q {{ font-size: 24px; font-weight: 700; color: #191F28; line-height: 1.4; margin: 0 0 24px; }}
+.t-note {{ font-size: 15px; color: #8B95A1; margin: -12px 0 16px; }}
+
+/* 진행 표시 */
+.t-step {{ font-size: 14px; font-weight: 600; color: {TOSS_BLUE}; margin-bottom: 8px; }}
+.t-bar {{ height: 4px; background: #F2F4F6; border-radius: 2px; margin-bottom: 28px; }}
+.t-bar > div {{ height: 4px; background: {TOSS_BLUE}; border-radius: 2px; }}
+
+/* 추천 카드 */
+.t-card {{ background: #F9FAFB; border-radius: 20px; padding: 20px 22px; margin-bottom: 12px; }}
+.t-card .num {{ font-size: 13px; font-weight: 600; color: {TOSS_BLUE}; margin-bottom: 4px; }}
+.t-card .name {{ font-size: 20px; font-weight: 700; color: #191F28; margin-bottom: 14px; }}
+.t-card .row {{ display: flex; font-size: 15px; color: #333D4B; padding: 3px 0; line-height: 1.45; }}
+.t-card .label {{ width: 44px; flex-shrink: 0; color: #8B95A1; }}
+.t-card .why {{ margin-top: 12px; font-size: 14px; color: #6B7684; }}
+
+/* 버튼 공통 */
+.stButton button, .stFormSubmitButton button {{
+    border-radius: 16px; font-size: 17px; font-weight: 600;
+    min-height: 56px; box-shadow: none; transition: background .15s;
+}}
+/* 선택지: 연한 회색 */
+.stButton button[kind="secondary"], [data-testid="stBaseButton-secondary"] {{
+    background: #F2F4F6; color: #333D4B; border: none;
+    justify-content: flex-start; padding-left: 22px;
+}}
+.stButton button[kind="secondary"]:hover, [data-testid="stBaseButton-secondary"]:hover {{
+    background: #E5E8EB; color: #191F28; border: none;
+}}
+/* 꼭 누르는 버튼: 토스 파랑 */
+.stButton button[kind="primary"], [data-testid="stBaseButton-primary"],
+.stFormSubmitButton button {{
+    background: {TOSS_BLUE}; color: #FFFFFF; border: none;
+}}
+.stButton button[kind="primary"]:hover, [data-testid="stBaseButton-primary"]:hover,
+.stFormSubmitButton button:hover {{
+    background: #1B64DA; color: #FFFFFF; border: none;
+}}
+/* 이전 / 처음부터 다시: 회색 글자 */
+.stButton button[kind="tertiary"], [data-testid="stBaseButton-tertiary"] {{
+    min-height: 40px; font-size: 15px; font-weight: 500; color: #8B95A1;
+    background: transparent; border: none; justify-content: center;
+}}
+.stButton button[kind="tertiary"]:hover, [data-testid="stBaseButton-tertiary"]:hover {{
+    color: #4E5968;
+}}
+/* 비밀번호 입력칸 */
+.stTextInput input {{
+    background: #F2F4F6; border: none; border-radius: 14px;
+    min-height: 52px; font-size: 17px; padding-left: 16px;
+}}
+.stTextInput [data-baseweb="input"], .stTextInput [data-baseweb="base-input"] {{
+    background: #F2F4F6; border: none; border-radius: 14px;
+}}
+.stTextInput label p {{ font-size: 15px; color: #6B7684; }}
+</style>
+"""
+
+
+def esc(x):
+    return html.escape(str(x))
+
+
+def text(cls, content):
+    st.markdown(f'<div class="{cls}">{esc(content)}</div>', unsafe_allow_html=True)
+
+
 def _button(label, wide=True, **kw):
     """Streamlit 버전에 따라 없는 옵션이 있으면 빼고 다시 시도"""
     tries = []
@@ -279,8 +362,7 @@ def _button(label, wide=True, **kw):
         tries.append(dict(kw, width="stretch"))
         tries.append(dict(kw, use_container_width=True))
     tries.append(kw)
-    plain = {k: v for k, v in kw.items() if k not in ("icon", "type")}
-    tries.append(plain)
+    tries.append({k: v for k, v in kw.items() if k not in ("icon", "type")})
     for opts in tries:
         try:
             return st.button(label, **opts)
@@ -288,40 +370,49 @@ def _button(label, wide=True, **kw):
             continue
 
 
-def option_button(label, **kw):        # 선택지: 테두리 버튼
+def option_button(label, **kw):        # 선택지: 회색 버튼
     return _button(label, type="secondary", **kw)
 
 
-def main_button(label, **kw):          # 꼭 눌러야 하는 버튼: 파란 버튼
+def main_button(label, **kw):          # 꼭 누르는 버튼: 파란 버튼
     return _button(label, type="primary", **kw)
 
 
-def nav_button(label, icon, **kw):     # 이전 / 처음부터 다시: 글자만 있는 버튼
-    return _button(label, wide=False, type="tertiary", icon=icon, **kw)
+def nav_button(label, **kw):           # 이전 / 처음부터 다시: 회색 글자
+    return _button(label, type="tertiary", **kw)
 
 
 def nav_row(back=True, key=""):
-    st.divider()
-    col1, col2 = st.columns(2)
+    st.write("")
     if back:
+        col1, col2 = st.columns(2)
         with col1:
-            nav_button("이전", ":material/arrow_back:", key=f"back{key}", on_click=go_back)
-    with col2:
-        nav_button("처음부터 다시", ":material/refresh:", key=f"restart{key}", on_click=restart)
+            nav_button("← 이전", key=f"back{key}", on_click=go_back)
+        with col2:
+            nav_button("처음부터 다시", key=f"restart{key}", on_click=restart)
+    else:
+        nav_button("처음부터 다시", key=f"restart{key}", on_click=restart)
 
 
 def restaurant_card(num, r, a):
-    with st.container(border=True):
-        title = f"{num}. {r['식당명']}" if num else r["식당명"]
-        st.markdown(f"**{title}**")
-        st.markdown(
-            f":gray[위치]　{r['위치']}  \n"
-            f":gray[메뉴]　{r['대표메뉴']}  \n"
-            f":gray[가격]　{r['가격']:,}원  \n"
-            f":gray[영업]　{r['영업시간']} (브레이크타임 {r['브레이크타임'] or '없음'})  \n"
-            f":gray[휴무]　{r['휴무일'] or '없음'}"
-        )
-        st.caption(f"추천 이유: {reason_text(r, a)}")
+    brk = r["브레이크타임"] or "없음"
+    rows = [
+        ("위치", r["위치"]),
+        ("메뉴", r["대표메뉴"]),
+        ("가격", f"{r['가격']:,}원"),
+        ("영업", f"{r['영업시간']} (브레이크타임 {brk})"),
+        ("휴무", r["휴무일"] or "없음"),
+    ]
+    body = "".join(
+        f'<div class="row"><span class="label">{esc(k)}</span><span>{esc(v)}</span></div>'
+        for k, v in rows
+    )
+    st.markdown(
+        f'<div class="t-card"><div class="num">추천 {num}</div>'
+        f'<div class="name">{esc(r["식당명"])}</div>{body}'
+        f'<div class="why">추천 이유: {esc(reason_text(r, a))}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def get_password():
@@ -332,14 +423,21 @@ def get_password():
 
 
 def page_login():
-    st.title(APP_TITLE)
+    text("t-title", APP_TITLE)
     password = get_password()
     if password is None:
         st.error("관리자 설정 필요: Streamlit Cloud의 Secrets에 password를 입력하세요.")
         return
+    st.write("")
     with st.form("login", border=False):
         typed = st.text_input("비밀번호를 입력하세요.", type="password")
-        ok = st.form_submit_button("입장", type="primary")
+        ok = False
+        for opts in (dict(width="stretch"), dict(use_container_width=True), {}):
+            try:
+                ok = st.form_submit_button("입장", type="primary", **opts)
+                break
+            except Exception:
+                continue
     if ok:
         if typed == password:
             st.session_state.authed = True
@@ -349,18 +447,22 @@ def page_login():
 
 
 def page_start():
-    st.title(APP_TITLE)
-    st.write("몇 가지 질문에 답하면 부산대 근처 식당을 추천해 드립니다.")
-    st.write("")
+    text("t-title", APP_TITLE)
+    text("t-sub", "몇 가지 질문에 답하면 부산대 근처 식당을 추천해 드립니다.")
     main_button("시작", on_click=start)
 
 
 def page_question():
     step = st.session_state.step
-    key, text, options = QUESTIONS[step]
+    key, q, options = QUESTIONS[step]
     total = len(QUESTIONS)
-    st.progress((step + 1) / total, text=f"{step + 1} / {total}")
-    st.subheader(text)
+    pct = int((step + 1) / total * 100)
+    st.markdown(
+        f'<div class="t-step">{step + 1} / {total}</div>'
+        f'<div class="t-bar"><div style="width:{pct}%"></div></div>',
+        unsafe_allow_html=True,
+    )
+    text("t-q", q)
     for opt in options:
         option_button(opt, key=f"q{step}_{opt}", on_click=choose, args=(key, opt))
     nav_row(back=True, key="_q")
@@ -371,43 +473,45 @@ def page_result():
     a = s.answers
 
     if not s.queue:
-        st.subheader("추천 결과")
-        st.write("조건에 맞는 식당이 없습니다. 조건을 바꿔 다시 시도해 주세요.")
+        text("t-q", "추천 결과")
+        text("t-sub", "조건에 맞는 식당이 없습니다. 조건을 바꿔 다시 시도해 주세요.")
         main_button("처음부터 다시", on_click=restart)
         return
 
     if s.stage == "end":
-        st.subheader("추천 결과")
-        st.write("조건에 맞는 식당을 모두 보여드렸습니다.")
+        text("t-q", "추천 결과")
+        text("t-sub", "조건에 맞는 식당을 모두 보여드렸습니다.")
         main_button("처음부터 다시", on_click=restart)
         return
 
     if s.stage == "why":
-        st.subheader("어떤 점이 아쉬우신가요?")
+        text("t-q", "어떤 점이 아쉬우신가요?")
         option_button("가격이 비싸요", on_click=retry, args=("price",))
         option_button("다른 종류를 원해요", on_click=retry, args=("kind",))
         option_button("그냥 싫어요", on_click=retry, args=("any",))
         nav_row(back=False, key="_w")
         return
 
-    # stage == "show": 추천 3곳을 보여주고, 아래에 다른 곳 보기 버튼
-    st.subheader("추천 결과")
-    if s.again:
-        st.caption("다른 식당을 추천합니다.")
-    if s.notice:
-        st.caption(s.notice)
-    if s.partial:
-        st.caption("모든 조건에 맞는 곳이 없어 가장 비슷한 곳을 추천합니다.")
+    text("t-q", "추천 결과")
+    for note in (
+        "다른 식당을 추천합니다." if s.again else None,
+        s.notice,
+        "모든 조건에 맞는 곳이 없어 가장 비슷한 곳을 추천합니다." if s.partial else None,
+    ):
+        if note:
+            text("t-note", note)
 
     for n, i in enumerate(s.shown, start=1):
         restaurant_card(n, s.queue[i], a)
 
+    st.write("")
     main_button("다른 곳 볼래요", on_click=want_other)
     nav_row(back=False, key="_r")
 
 
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🍚", layout="centered")
+    st.markdown(CSS, unsafe_allow_html=True)
     init_state()
 
     if not st.session_state.authed:
