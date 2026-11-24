@@ -138,13 +138,38 @@ def all_any(a):
     return all(a[k] == ANY for k in ("location", "budget", "kind", "form", "temp"))
 
 
+def basic_hits(r, a):
+    """위치·예산 중 맞는 항목 이름 목록 (넓힌 추천에서 점수로 사용)"""
+    hits = []
+    if a["location"] != ANY and r["위치"] == a["location"]:
+        hits.append(a["location"])
+    if a["budget"] in BUDGET_LIMIT and r["가격"] <= BUDGET_LIMIT[a["budget"]]:
+        hits.append(a["budget"])
+    return hits
+
+
+WIDE_NOTICE = "조건에 맞는 곳이 없어 위치나 예산을 조금 넓혀서 추천합니다."
+NO_MATCH = "조건에 맞는 식당이 없습니다. 조건을 바꿔 다시 시도해 주세요."
+
+
 def build_recommendation(rows, a, now=None):
     """
     추천 목록과 안내 문구를 만든다.
-    반환: {"queue": [식당, ...], "notice": 문구 또는 None, "partial": bool}
+    반환: {"queue": [식당, ...], "notice": 문구 또는 None,
+           "partial": bool, "empty": 결과가 없을 때 문구}
     """
     dt = target_time(a["when"], now)
-    candidates = [r for r in rows if passes_filters(r, a, dt)]
+    open_now = [r for r in rows if is_open(r, dt)]
+
+    # 그 시간에 문 연 곳이 아예 없음 → 시간 문제
+    if not open_now:
+        if a["when"] == "지금":
+            msg = "지금 영업 중인 식당이 없습니다. 점심이나 저녁으로 다시 골라보세요."
+        else:
+            msg = "그 시간에 영업 중인 식당이 없습니다."
+        return {"queue": [], "notice": None, "partial": False, "empty": msg}
+
+    candidates = [r for r in open_now if passes_filters(r, a, dt)]
 
     # 모두 '상관없음' → 학식 우선
     if all_any(a):
@@ -152,30 +177,34 @@ def build_recommendation(rows, a, now=None):
         others = [r for r in candidates if r["식당명"] != SCHOOL_CAFETERIA]
         random.shuffle(others)
         if cafeteria:
-            return {"queue": cafeteria + others,
-                    "notice": "고르기 어려우시면 학식은 어떠세요?",
-                    "partial": False}
-        return {"queue": others,
-                "notice": "학식 운영 시간이 아니라서 영업 중인 식당을 추천합니다.",
-                "partial": False}
+            notice = "고르기 어려우시면 학식은 어떠세요?"
+        else:
+            notice = "학식 운영 시간이 아니라서 영업 중인 식당을 추천합니다."
+        return {"queue": cafeteria + others, "notice": notice,
+                "partial": False, "empty": NO_MATCH}
 
-    # 점수 순 정렬 (같은 점수는 무작위)
+    # 위치·예산 때문에 다 빠짐 → 위치·예산도 점수로 바꿔서 넓힌 추천 (1점 이상만)
+    if not candidates:
+        def wide_score(r):
+            return len(basic_hits(r, a)) + len(matched_prefs(r, a))
+        wide = [r for r in open_now if wide_score(r) >= 1]
+        random.shuffle(wide)
+        wide.sort(key=wide_score, reverse=True)
+        return {"queue": wide, "notice": WIDE_NOTICE if wide else None,
+                "partial": False, "empty": NO_MATCH}
+
+    # 평소: 점수 순 정렬 (같은 점수는 무작위)
     random.shuffle(candidates)
     candidates.sort(key=lambda r: len(matched_prefs(r, a)), reverse=True)
 
     need = requested_prefs(a)
-    best = len(matched_prefs(candidates[0], a)) if candidates else 0
-    partial = bool(candidates) and need > 0 and best < need
-    return {"queue": candidates, "notice": None, "partial": partial}
+    best = len(matched_prefs(candidates[0], a))
+    partial = need > 0 and best < need
+    return {"queue": candidates, "notice": None, "partial": partial, "empty": NO_MATCH}
 
 
 def reason_text(r, a):
-    parts = []
-    if a["location"] != ANY:
-        parts.append(a["location"])
-    if a["budget"] in BUDGET_LIMIT:
-        parts.append(a["budget"])
-    parts += matched_prefs(r, a)
+    parts = basic_hits(r, a) + matched_prefs(r, a)
     if not parts:
         return "영업 중인 식당 중에서 골랐습니다."
     return f"{', '.join(parts)} 조건에 맞습니다."
@@ -219,6 +248,7 @@ def init_state():
         "partial": False,
         "stage": "show",      # show → why → end
         "again": False,
+        "empty": "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -245,7 +275,7 @@ def choose(key, option):
         st.session_state.update(page="result", queue=rec["queue"], shown=shown,
                                 seen=set(shown), notice=rec["notice"],
                                 partial=rec["partial"], stage="show",
-                                again=False)
+                                again=False, empty=rec["empty"])
 
 
 def go_back():
@@ -474,7 +504,7 @@ def page_result():
 
     if not s.queue:
         text("t-q", "추천 결과")
-        text("t-sub", "조건에 맞는 식당이 없습니다. 조건을 바꿔 다시 시도해 주세요.")
+        text("t-sub", s.empty)
         main_button("처음부터 다시", on_click=restart)
         return
 
