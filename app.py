@@ -277,15 +277,45 @@ def retry(why):
 # ─────────────────────────────────────────────
 # 화면
 # ─────────────────────────────────────────────
-def wide_button(label, **kw):
-    """화면 폭에 맞춘 버튼 (Streamlit 버전에 따라 옵션 이름이 달라서 둘 다 대비)"""
-    try:
-        return st.button(label, width="stretch", **kw)
-    except TypeError:
-        return st.button(label, use_container_width=True, **kw)
+def _button(label, wide=True, **kw):
+    """Streamlit 버전에 따라 없는 옵션이 있으면 빼고 다시 시도"""
+    tries = []
+    if wide:
+        tries.append(dict(kw, width="stretch"))
+        tries.append(dict(kw, use_container_width=True))
+    tries.append(kw)
+    plain = {k: v for k, v in kw.items() if k not in ("icon", "type")}
+    tries.append(plain)
+    for opts in tries:
+        try:
+            return st.button(label, **opts)
+        except Exception:
+            continue
 
 
-def restaurant_card(num, r, a):
+def option_button(label, **kw):        # 선택지: 테두리 버튼
+    return _button(label, type="secondary", **kw)
+
+
+def main_button(label, **kw):          # 꼭 눌러야 하는 버튼: 파란 버튼
+    return _button(label, type="primary", **kw)
+
+
+def nav_button(label, icon, **kw):     # 이전 / 처음부터 다시: 글자만 있는 버튼
+    return _button(label, wide=False, type="tertiary", icon=icon, **kw)
+
+
+def nav_row(back=True, key=""):
+    st.divider()
+    col1, col2 = st.columns(2)
+    if back:
+        with col1:
+            nav_button("이전", ":material/arrow_back:", key=f"back{key}", on_click=go_back)
+    with col2:
+        nav_button("처음부터 다시", ":material/refresh:", key=f"restart{key}", on_click=restart)
+
+
+def restaurant_card(num, r, a, can_pick=False, idx=None):
     with st.container(border=True):
         title = f"{num}. {r['식당명']}" if num else r["식당명"]
         st.markdown(f"**{title}**")
@@ -297,6 +327,8 @@ def restaurant_card(num, r, a):
             f":gray[휴무]　{r['휴무일'] or '없음'}"
         )
         st.caption(f"추천 이유: {reason_text(r, a)}")
+        if can_pick:
+            main_button("여기로 갈게요", key=f"pick_{idx}", on_click=pick, args=(idx,))
 
 
 def get_password():
@@ -327,7 +359,7 @@ def page_start():
     st.title(APP_TITLE)
     st.write("몇 가지 질문에 답하면 부산대 근처 식당을 추천해 드립니다.")
     st.write("")
-    wide_button("시작", type="primary", on_click=start)
+    main_button("시작", on_click=start)
 
 
 def page_question():
@@ -337,36 +369,42 @@ def page_question():
     st.progress((step + 1) / total, text=f"{step + 1} / {total}")
     st.subheader(text)
     for opt in options:
-        wide_button(opt, key=f"q{step}_{opt}", on_click=choose, args=(key, opt))
-    st.write("")
-    col1, col2 = st.columns(2)
-    with col1:
-        wide_button("이전", key="back", on_click=go_back)
-    with col2:
-        wide_button("처음부터 다시", key="restart_q", on_click=restart)
+        option_button(opt, key=f"q{step}_{opt}", on_click=choose, args=(key, opt))
+    nav_row(back=True, key="_q")
 
 
 def page_result():
     s = st.session_state
     a = s.answers
-    st.subheader("추천 결과")
 
     if not s.queue:
+        st.subheader("추천 결과")
         st.write("조건에 맞는 식당이 없습니다. 조건을 바꿔 다시 시도해 주세요.")
-        wide_button("처음부터 다시", type="primary", on_click=restart)
+        main_button("처음부터 다시", on_click=restart)
         return
 
     if s.stage == "end":
+        st.subheader("추천 결과")
         st.write("조건에 맞는 식당을 모두 보여드렸습니다.")
-        wide_button("처음부터 다시", type="primary", on_click=restart)
+        main_button("처음부터 다시", on_click=restart)
         return
 
     if s.stage == "done":
+        st.subheader("맛있게 드세요.")
         restaurant_card("", s.queue[s.chosen], a)
-        st.success("맛있게 드세요.")
-        wide_button("처음부터 다시", on_click=restart)
+        nav_row(back=False, key="_d")
         return
 
+    if s.stage == "why":
+        st.subheader("어떤 점이 아쉬우신가요?")
+        option_button("가격이 비싸요", on_click=retry, args=("price",))
+        option_button("다른 종류를 원해요", on_click=retry, args=("kind",))
+        option_button("그냥 싫어요", on_click=retry, args=("any",))
+        nav_row(back=False, key="_w")
+        return
+
+    # stage == "show": 질문을 먼저 보여주고, 카드마다 고르기 버튼
+    st.subheader("어디로 가실래요?")
     if s.again:
         st.caption("다른 식당을 추천합니다.")
     if s.notice:
@@ -375,22 +413,10 @@ def page_result():
         st.caption("모든 조건에 맞는 곳이 없어 가장 비슷한 곳을 추천합니다.")
 
     for n, i in enumerate(s.shown, start=1):
-        restaurant_card(n, s.queue[i], a)
+        restaurant_card(n, s.queue[i], a, can_pick=True, idx=i)
 
-    st.write("")
-    if s.stage == "show":
-        st.subheader("어디로 가실래요?")
-        for i in s.shown:
-            wide_button(s.queue[i]["식당명"], key=f"pick_{i}", on_click=pick, args=(i,))
-        wide_button("다른 곳 볼래요", on_click=want_other)
-    elif s.stage == "why":
-        st.subheader("어떤 점이 아쉬우신가요?")
-        wide_button("가격이 비싸요", on_click=retry, args=("price",))
-        wide_button("다른 종류를 원해요", on_click=retry, args=("kind",))
-        wide_button("그냥 싫어요", on_click=retry, args=("any",))
-
-    st.write("")
-    wide_button("처음부터 다시", key="restart_r", on_click=restart)
+    option_button("다른 곳 볼래요", on_click=want_other)
+    nav_row(back=False, key="_r")
 
 
 def main():
