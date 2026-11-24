@@ -5,7 +5,6 @@
 """
 
 import csv
-import html
 import random
 from datetime import datetime, time
 from pathlib import Path
@@ -20,7 +19,6 @@ APP_TITLE = "오늘 뭐 먹지? 부산대"
 DATA_FILE = Path(__file__).parent / "restaurants.csv"
 KST = ZoneInfo("Asia/Seoul")          # 서버가 해외에 있어도 한국 시간으로 계산
 SCHOOL_CAFETERIA = "금정회관 (학생식당)"
-BLUE = "#2563EB"
 
 ANY = "상관없음"
 
@@ -182,18 +180,26 @@ def reason_text(r, a):
     return f"{', '.join(parts)} 조건에 맞습니다."
 
 
-def next_index(queue, current, seen, why):
-    """피드백에 맞는 다음 식당 위치. 없으면 None."""
-    cur = queue[current]
+SHOW_COUNT = 3   # 한 번에 추천하는 식당 수
+
+
+def next_batch(queue, seen, shown, why):
+    """피드백에 맞는 다음 추천 묶음(최대 3곳)의 위치 목록."""
+    cur = [queue[i] for i in shown]
+    min_price = min(r["가격"] for r in cur)
+    kinds = {r["종류"] for r in cur}
+    picks = []
     for i, r in enumerate(queue):
         if i in seen:
             continue
-        if why == "price" and r["가격"] >= cur["가격"]:
+        if why == "price" and r["가격"] >= min_price:
             continue
-        if why == "kind" and r["종류"] == cur["종류"]:
+        if why == "kind" and r["종류"] in kinds:
             continue
-        return i
-    return None
+        picks.append(i)
+        if len(picks) == SHOW_COUNT:
+            break
+    return picks
 
 
 # ─────────────────────────────────────────────
@@ -206,12 +212,13 @@ def init_state():
         "step": 0,
         "answers": {},
         "queue": [],
-        "current": 0,
-        "seen": set(),
+        "shown": [],          # 지금 보여주는 식당들의 위치
+        "seen": set(),        # 이미 보여준 식당들
         "notice": None,
         "partial": False,
         "stage": "show",      # show → why → done / end
         "again": False,
+        "chosen": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -220,8 +227,8 @@ def init_state():
 
 def restart():
     st.session_state.update(page="start", step=0, answers={}, queue=[],
-                            current=0, seen=set(), notice=None,
-                            partial=False, stage="show", again=False)
+                            shown=[], seen=set(), notice=None, partial=False,
+                            stage="show", again=False, chosen=None)
 
 
 def start():
@@ -234,10 +241,11 @@ def choose(key, option):
         st.session_state.step += 1
     else:
         rec = build_recommendation(load_restaurants(), st.session_state.answers)
-        st.session_state.update(page="result", queue=rec["queue"], current=0,
-                                seen={0}, notice=rec["notice"],
+        shown = list(range(min(SHOW_COUNT, len(rec["queue"]))))
+        st.session_state.update(page="result", queue=rec["queue"], shown=shown,
+                                seen=set(shown), notice=rec["notice"],
                                 partial=rec["partial"], stage="show",
-                                again=False)
+                                again=False, chosen=None)
 
 
 def go_back():
@@ -247,88 +255,41 @@ def go_back():
         st.session_state.step -= 1
 
 
-def feedback(choice):
-    st.session_state.stage = "done" if choice == "good" else "why"
+def pick(i):
+    st.session_state.update(stage="done", chosen=i)
+
+
+def want_other():
+    st.session_state.stage = "why"
 
 
 def retry(why):
     s = st.session_state
-    nxt = next_index(s.queue, s.current, s.seen, why)
-    if nxt is None:
+    picks = next_batch(s.queue, s.seen, s.shown, why)
+    if not picks:
         s.stage = "end"
     else:
-        s.current = nxt
-        s.seen.add(nxt)
-        s.stage = "show"
-        s.again = True
-        s.notice = None
-        s.partial = False
-
-
-# ─────────────────────────────────────────────
-# 디자인
-# ─────────────────────────────────────────────
-CSS = f"""
-<style>
-.block-container, [data-testid="stMainBlockContainer"] {{
-    max-width: 480px; padding-top: 2.5rem;
-}}
-h1 {{ font-size: 1.6rem !important; font-weight: 700; }}
-.stButton > button, .stFormSubmitButton > button {{
-    width: 100%; border-radius: 10px; padding: 0.6rem 0;
-    border: 1px solid #D1D5DB; background: #FFFFFF; color: #111827;
-}}
-.stButton > button:hover, .stFormSubmitButton > button:hover {{
-    border-color: {BLUE}; color: {BLUE};
-}}
-.stButton > button[kind="primary"], .stFormSubmitButton > button {{
-    background: {BLUE}; border-color: {BLUE}; color: #FFFFFF;
-}}
-.stButton > button[kind="primary"]:hover, .stFormSubmitButton > button:hover {{
-    background: #1D4ED8; color: #FFFFFF;
-}}
-.progress-label {{ color: #6B7280; font-size: 0.85rem; margin-bottom: 0.3rem; }}
-.progress-track {{ background: #E5E7EB; height: 6px; border-radius: 3px; margin-bottom: 1.8rem; }}
-.progress-fill {{ background: {BLUE}; height: 6px; border-radius: 3px; }}
-.question {{ font-size: 1.25rem; font-weight: 600; margin-bottom: 1.2rem; }}
-.card {{ border: 1px solid #E5E7EB; border-radius: 12px; padding: 1.2rem 1.3rem; margin: 0.8rem 0 1.4rem; }}
-.card .name {{ font-size: 1.3rem; font-weight: 700; color: {BLUE}; margin-bottom: 0.8rem; }}
-.card .row {{ display: flex; padding: 0.25rem 0; font-size: 0.95rem; }}
-.card .label {{ width: 6.5rem; color: #6B7280; flex-shrink: 0; }}
-.card .reason {{ margin-top: 0.9rem; padding-top: 0.8rem; border-top: 1px solid #F3F4F6; font-size: 0.95rem; }}
-.notice {{ color: #374151; margin-bottom: 0.2rem; }}
-.small {{ color: #6B7280; font-size: 0.9rem; }}
-</style>
-"""
-
-
-def esc(x):
-    return html.escape(str(x))
-
-
-def restaurant_card(r, a):
-    brk = r["브레이크타임"] or "없음"
-    rows = [
-        ("위치", r["위치"]),
-        ("메뉴", r["대표메뉴"]),
-        ("가격", f"{r['가격']:,}원"),
-        ("영업시간", f"{r['영업시간']} / 브레이크타임: {brk}"),
-        ("휴무일", r["휴무일"] or "없음"),
-    ]
-    body = "".join(
-        f'<div class="row"><span class="label">{esc(k)}</span><span>{esc(v)}</span></div>'
-        for k, v in rows
-    )
-    return (
-        f'<div class="card"><div class="small">추천 식당</div>'
-        f'<div class="name">{esc(r["식당명"])}</div>{body}'
-        f'<div class="reason">추천 이유: {esc(reason_text(r, a))}</div></div>'
-    )
+        s.shown = picks
+        s.seen.update(picks)
+        s.update(stage="show", again=True, notice=None, partial=False)
 
 
 # ─────────────────────────────────────────────
 # 화면
 # ─────────────────────────────────────────────
+def restaurant_card(num, r, a):
+    title = f"{num}. {r['식당명']}" if num else r["식당명"]
+    st.write(title)
+    st.write(
+        f"- 위치: {r['위치']}\n"
+        f"- 메뉴: {r['대표메뉴']}\n"
+        f"- 가격: {r['가격']:,}원\n"
+        f"- 영업시간: {r['영업시간']} / 브레이크타임: {r['브레이크타임'] or '없음'}\n"
+        f"- 휴무일: {r['휴무일'] or '없음'}\n"
+        f"- 추천 이유: {reason_text(r, a)}"
+    )
+
+
 def get_password():
     try:
         return st.secrets["password"]
@@ -340,7 +301,7 @@ def page_login():
     st.title(APP_TITLE)
     password = get_password()
     if password is None:
-        st.error("관리자 설정 필요: Streamlit Cloud의 Secrets에 password를 입력하세요.")
+        st.write("관리자 설정 필요: Streamlit Cloud의 Secrets에 password를 입력하세요.")
         return
     with st.form("login"):
         typed = st.text_input("비밀번호를 입력하세요.", type="password")
@@ -350,33 +311,25 @@ def page_login():
             st.session_state.authed = True
             st.rerun()
         else:
-            st.error("비밀번호가 맞지 않습니다.")
+            st.write("비밀번호가 맞지 않습니다.")
 
 
 def page_start():
     st.title(APP_TITLE)
     st.write("몇 가지 질문에 답하면 부산대 근처 식당을 추천해 드립니다.")
-    st.write("")
-    st.button("시작", type="primary", on_click=start)
+    st.button("시작", on_click=start)
 
 
 def page_question():
     step = st.session_state.step
     key, text, options = QUESTIONS[step]
-    total = len(QUESTIONS)
-    pct = int((step + 1) / total * 100)
-    st.markdown(
-        f'<div class="progress-label">{step + 1} / {total}</div>'
-        f'<div class="progress-track"><div class="progress-fill" style="width:{pct}%"></div></div>'
-        f'<div class="question">{esc(text)}</div>',
-        unsafe_allow_html=True,
-    )
+    st.write(f"{step + 1} / {len(QUESTIONS)}")
+    st.write(text)
     for opt in options:
         st.button(opt, key=f"q{step}_{opt}", on_click=choose, args=(key, opt))
     st.write("")
-    col1, col2 = st.columns(2)
-    col1.button("이전", key="back", on_click=go_back)
-    col2.button("처음부터 다시", key="restart_q", on_click=restart)
+    st.button("이전", key="back", on_click=go_back)
+    st.button("처음부터 다시", key="restart_q", on_click=restart)
 
 
 def page_result():
@@ -384,45 +337,48 @@ def page_result():
     a = s.answers
 
     if not s.queue:
-        st.markdown('<div class="question">추천 결과</div>', unsafe_allow_html=True)
         st.write("조건에 맞는 식당이 없습니다. 조건을 바꿔 다시 시도해 주세요.")
-        st.button("처음부터 다시", type="primary", on_click=restart)
+        st.button("처음부터 다시", on_click=restart)
         return
 
     if s.stage == "end":
         st.write("조건에 맞는 식당을 모두 보여드렸습니다.")
-        st.button("처음부터 다시", type="primary", on_click=restart)
+        st.button("처음부터 다시", on_click=restart)
         return
 
-    r = s.queue[s.current]
+    if s.stage == "done":
+        restaurant_card("", s.queue[s.chosen], a)
+        st.write("맛있게 드세요.")
+        st.button("처음부터 다시", on_click=restart)
+        return
+
     if s.again:
-        st.markdown('<div class="notice">다른 식당을 추천합니다.</div>', unsafe_allow_html=True)
+        st.write("다른 식당을 추천합니다.")
     if s.notice:
-        st.markdown(f'<div class="notice">{esc(s.notice)}</div>', unsafe_allow_html=True)
+        st.write(s.notice)
     if s.partial:
-        st.markdown('<div class="small">모든 조건에 맞는 곳이 없어 가장 비슷한 곳을 추천합니다.</div>',
-                    unsafe_allow_html=True)
-    st.markdown(restaurant_card(r, a), unsafe_allow_html=True)
+        st.write("모든 조건에 맞는 곳이 없어 가장 비슷한 곳을 추천합니다.")
+
+    for n, i in enumerate(s.shown, start=1):
+        restaurant_card(n, s.queue[i], a)
 
     if s.stage == "show":
-        st.markdown('<div class="question">이 식당은 어떠세요?</div>', unsafe_allow_html=True)
-        st.button("여기로 갈게요", type="primary", on_click=feedback, args=("good",))
-        st.button("다른 곳 볼래요", on_click=feedback, args=("bad",))
+        st.write("어디로 가실래요?")
+        for i in s.shown:
+            st.button(s.queue[i]["식당명"], key=f"pick_{i}", on_click=pick, args=(i,))
+        st.button("다른 곳 볼래요", on_click=want_other)
     elif s.stage == "why":
-        st.markdown('<div class="question">어떤 점이 아쉬우신가요?</div>', unsafe_allow_html=True)
+        st.write("어떤 점이 아쉬우신가요?")
         st.button("가격이 비싸요", on_click=retry, args=("price",))
         st.button("다른 종류를 원해요", on_click=retry, args=("kind",))
         st.button("그냥 싫어요", on_click=retry, args=("any",))
-    elif s.stage == "done":
-        st.markdown('<div class="question">맛있게 드세요.</div>', unsafe_allow_html=True)
 
     st.write("")
     st.button("처음부터 다시", key="restart_r", on_click=restart)
 
 
 def main():
-    st.set_page_config(page_title=APP_TITLE, page_icon="🍚", layout="centered")
-    st.markdown(CSS, unsafe_allow_html=True)
+    st.set_page_config(page_title=APP_TITLE)
     init_state()
 
     if not st.session_state.authed:
